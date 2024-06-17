@@ -3,12 +3,15 @@ package main
 import (
 	"log"
 
+	"bundler/config"
 	"bundler/controllers"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	config.LoadEnv() // 加载环境变量
+
 	r := gin.Default()
 
 	// 创建 UserOpController 实例
