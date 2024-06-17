@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	entryPointAddress = "0x18c160daA467461CcBF2cbbd8C2D3b3D56F22522" // EntryPoint 合约地址
+	entryPointAddress = "0xF988D980A36c3E8da79AB91B4562fD81adA7ECE3" // EntryPoint 合约地址
 )
 
 type UserOpController struct {
@@ -245,3 +245,18 @@ func (ctrl *UserOpController) processAndSendUserOp(sender string, nonce uint64, 
 	fmt.Println("Transaction sent with hash:", signedTx.Hash().Hex())
 	return signedTx.Hash().Hex(), nil
 }
+
+/**
+配置与初始化：代码通过 config.LoadEnv 函数加载环境变量，其中包括 RPC_URL 和 PRIVATE_KEY。
+NewUserOpController 函数用来创建一个新的控制器实例，并连接到以太坊客户端。
+
+处理请求：StoreUserOp 函数负责处理 HTTP POST 请求，解析并验证 JSON 请求体，将其转换为适当的数据格式，
+并调用 processAndSendUserOp 函数处理 User Operation。
+
+验证与解码：validateAndDecodeHexString 和 validateAndDecodeFixedSizeHexString 函数用于验证并解码十六进制字符串，
+确保其格式正确并转换为字节数组。
+
+交易处理：processAndSendUserOp 函数创建并签署以太坊交易，将 User Operation 发送到指定的 EntryPoint 合约地址。
+
+注释与调试：代码在关键步骤中添加了详细的注释和调试信息，帮助理解和排查可能出现的问题。
+*/
