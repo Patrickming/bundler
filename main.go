@@ -5,6 +5,7 @@ import (
 
 	"bundler/config"
 	"bundler/controllers"
+	"bundler/routes"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,8 +21,9 @@ func main() {
 		log.Fatalf("Failed to create UserOpController: %v", err)
 	}
 
-	// 设置路由和处理方法
-	r.POST("/userOp", userOpController.StoreUserOp)
+	// 初始化路由
+	routes.SetupRouter(r)
+	routes.SetupUserOpRouter(r, userOpController)
 
 	// 运行服务器
 	if err := r.Run(":3000"); err != nil {

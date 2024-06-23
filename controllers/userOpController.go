@@ -5,11 +5,12 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
 	"os"
-	"time"
+	"strings"
 
 	"bundler/config"
 	"bundler/models"
@@ -22,10 +23,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
-	entryPointAddress = "0xF988D980A36c3E8da79AB91B4562fD81adA7ECE3" // EntryPoint 合约地址
+	entryPointAddress = "0x1A5C9969F47Ef041c3A359ae4ae9fd9E70eA5653" // 更新为正确的 EntryPoint 合约地址
 )
 
 type UserOpController struct {
@@ -49,6 +51,16 @@ func NewUserOpController() (*UserOpController, error) {
 
 	collection := mongoClient.Database("userop_db").Collection("userops")
 
+	// 创建唯一索引
+	indexModel := mongo.IndexModel{
+		Keys:    bson.M{"nonce": 1},
+		Options: options.Index().SetUnique(true),
+	}
+	_, err = collection.Indexes().CreateOne(context.TODO(), indexModel)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create unique index: %w", err)
+	}
+
 	return &UserOpController{
 		Client:     client,
 		Collection: collection,
@@ -66,37 +78,37 @@ func (ctrl *UserOpController) StoreUserOp(c *gin.Context) {
 	}
 
 	// 验证并解码每个字段的十六进制字符串
-	initCode, err := validateAndDecodeHexString(userOp.InitCode)
+	initCode, err := hexStringToBytes(userOp.InitCode)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid initCode: %v", err)})
 		return
 	}
 
-	callData, err := validateAndDecodeHexString(userOp.CallData)
+	callData, err := hexStringToBytes(userOp.CallData)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid callData: %v", err)})
 		return
 	}
 
-	accountGasLimits, err := validateAndDecodeHexString(userOp.AccountGasLimits)
+	accountGasLimits, err := hexStringToBytes(userOp.AccountGasLimits)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid accountGasLimits: %v", err)})
 		return
 	}
 
-	gasFees, err := validateAndDecodeHexString(userOp.GasFees)
+	gasFees, err := hexStringToBytes(userOp.GasFees)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid gasFees: %v", err)})
 		return
 	}
 
-	paymasterAndData, err := validateAndDecodeHexString(userOp.PaymasterAndData)
+	paymasterAndData, err := hexStringToBytes(userOp.PaymasterAndData)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid paymasterAndData: %v", err)})
 		return
 	}
 
-	signature, err := validateAndDecodeHexString(userOp.Signature)
+	signature, err := hexStringToBytes(userOp.Signature)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid signature: %v", err)})
 		return
@@ -113,14 +125,18 @@ func (ctrl *UserOpController) StoreUserOp(c *gin.Context) {
 	userOp.PaymasterAndData = hex.EncodeToString(paymasterAndData)
 	userOp.Signature = hex.EncodeToString(signature)
 
-	_, err = ctrl.Collection.InsertOne(context.TODO(), userOp)
+	filter := bson.M{"nonce": userOp.Nonce}
+	update := bson.M{
+		"$set": userOp,
+	}
+	opts := options.Update().SetUpsert(true)
+	_, err = ctrl.Collection.UpdateOne(context.TODO(), filter, update, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to store UserOp: %v", err)})
 		return
 	}
 
 	// 处理并发送 UserOp
-	time.Sleep(1 * time.Second) // 模拟处理时间
 	txHash, err := ctrl.processAndSendUserOp(userOp)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -128,7 +144,6 @@ func (ctrl *UserOpController) StoreUserOp(c *gin.Context) {
 	}
 
 	// 删除已处理的 userOp
-	filter := bson.M{"nonce": userOp.Nonce}
 	_, err = ctrl.Collection.DeleteOne(context.TODO(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete UserOp: %v", err)})
@@ -138,22 +153,30 @@ func (ctrl *UserOpController) StoreUserOp(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "UserOp received and sent", "transactionHash": txHash})
 }
 
-// validateAndDecodeHexString 验证并解码十六进制字符串
-func validateAndDecodeHexString(hexString string) ([]byte, error) {
-	if len(hexString) < 2 || hexString[:2] != "0x" {
-		return nil, fmt.Errorf("invalid hex string: %s", hexString)
+// hexStringToBytes 将十六进制字符串转换为字节数组
+func hexStringToBytes(hexStr string) ([]byte, error) {
+	// 检查字符串是否以 "0x" 开头
+	if strings.HasPrefix(hexStr, "0x") || strings.HasPrefix(hexStr, "0X") {
+		hexStr = hexStr[2:]
 	}
-	decoded, err := hex.DecodeString(hexString[2:])
+
+	// 检查字符串长度是否为偶数
+	if len(hexStr)%2 != 0 {
+		return nil, errors.New("invalid hex string length")
+	}
+
+	// 使用 hex.DecodeString 解码十六进制字符串
+	bytes, err := hex.DecodeString(hexStr)
 	if err != nil {
-		return nil, fmt.Errorf("error decoding hex string: %v", err)
+		return nil, err
 	}
-	return decoded, nil
+	return bytes, nil
 }
 
 // processAndSendUserOp 处理并发送 UserOp 到区块链
 func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOperation) (string, error) {
 	privateKey := os.Getenv("PRIVATE_KEY") // 从环境变量中读取私钥
-	abiPath := "./abi/EntryPoint.json"     // 合约 ABI 文件路径
+	abiPath := os.Getenv("ABI_PATH")       // 合约 ABI 文件路径
 
 	// 将私钥字符串转换为 ECDSA 私钥
 	privateKeyECDSA, err := crypto.HexToECDSA(privateKey)
@@ -212,20 +235,8 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 		return "", fmt.Errorf("error decoding signature: %v", err)
 	}
 
-	// 输出用于调试的实际发送数据
-	fmt.Printf("Prepared UserOp for contract call:\n{\n\tSender: \"%s\",\n\tNonce: %s,\n\tInitCode: \"%s\",\n\tCallData: \"%s\",\n\tAccountGasLimits: \"%s\",\n\tPreVerificationGas: %d,\n\tGasFees: \"%s\",\n\tPaymasterAndData: \"%s\",\n\tSignature: \"%s\"\n}\n",
-		userOp.Sender.Hex(),
-		userOp.Nonce.String(),
-		userOp.InitCode,
-		userOp.CallData,
-		userOp.AccountGasLimits,
-		userOp.PreVerificationGas.Uint64(),
-		userOp.GasFees,
-		userOp.PaymasterAndData,
-		userOp.Signature)
-
 	// 使用 ABI 打包数据以调用 handleOps 方法
-	data, err := contractAbi.Pack("handleOps", []struct {
+	ops := []struct {
 		Sender             common.Address
 		Nonce              *big.Int
 		InitCode           []byte
@@ -247,7 +258,11 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 			PaymasterAndData:   paymasterAndDataBytes,
 			Signature:          signatureBytes,
 		},
-	}, common.HexToAddress("0xC26Cbf92EdD4D0bE0d73264f097F76432ffb81D1"))
+	}
+
+	beneficiary := fromAddress // 可以根据需要修改
+
+	data, err := contractAbi.Pack("handleOps", ops, beneficiary)
 	if err != nil {
 		return "", fmt.Errorf("error packing data: %v", err)
 	}
@@ -266,7 +281,7 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 
 	// 创建交易对象
 	value := big.NewInt(0)
-	gasLimit := uint64(300000)
+	gasLimit := uint64(500000) // 增加 gas limit，确保有足够的 gas
 	toAddress := common.HexToAddress(entryPointAddress)
 	tx := types.NewTransaction(nonce, toAddress, value, gasLimit, gasPrice, data)
 
