@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 
-	"bundler/config"
 	"bundler/models"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -21,9 +20,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -31,8 +27,7 @@ const (
 )
 
 type UserOpController struct {
-	Client     *ethclient.Client
-	Collection *mongo.Collection
+	Client *ethclient.Client
 }
 
 // NewUserOpController 创建一个新的 UserOpController 实例
@@ -44,26 +39,8 @@ func NewUserOpController() (*UserOpController, error) {
 		return nil, fmt.Errorf("Failed to connect to the Ethereum client: %w", err)
 	}
 
-	mongoClient, err := config.GetMongoClient()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to connect to MongoDB: %w", err)
-	}
-
-	collection := mongoClient.Database("userop_db").Collection("userops")
-
-	// 创建唯一索引
-	indexModel := mongo.IndexModel{
-		Keys:    bson.M{"nonce": 1},
-		Options: options.Index().SetUnique(true),
-	}
-	_, err = collection.Indexes().CreateOne(context.TODO(), indexModel)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create unique index: %w", err)
-	}
-
 	return &UserOpController{
-		Client:     client,
-		Collection: collection,
+		Client: client,
 	}, nil
 }
 
@@ -117,36 +94,10 @@ func (ctrl *UserOpController) StoreUserOp(c *gin.Context) {
 	// 确保存储和输出数据的一致性
 	userOp.Nonce = big.NewInt(userOp.Nonce.Int64())
 
-	// 存储到 MongoDB
-	userOp.InitCode = hex.EncodeToString(initCode)
-	userOp.CallData = hex.EncodeToString(callData)
-	userOp.AccountGasLimits = hex.EncodeToString(accountGasLimits)
-	userOp.GasFees = hex.EncodeToString(gasFees)
-	userOp.PaymasterAndData = hex.EncodeToString(paymasterAndData)
-	userOp.Signature = hex.EncodeToString(signature)
-
-	filter := bson.M{"nonce": userOp.Nonce}
-	update := bson.M{
-		"$set": userOp,
-	}
-	opts := options.Update().SetUpsert(true)
-	_, err = ctrl.Collection.UpdateOne(context.TODO(), filter, update, opts)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to store UserOp: %v", err)})
-		return
-	}
-
 	// 处理并发送 UserOp
-	txHash, err := ctrl.processAndSendUserOp(userOp)
+	txHash, err := ctrl.processAndSendUserOp(userOp, initCode, callData, accountGasLimits, gasFees, paymasterAndData, signature)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 删除已处理的 userOp
-	_, err = ctrl.Collection.DeleteOne(context.TODO(), filter)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete UserOp: %v", err)})
 		return
 	}
 
@@ -174,7 +125,7 @@ func hexStringToBytes(hexStr string) ([]byte, error) {
 }
 
 // processAndSendUserOp 处理并发送 UserOp 到区块链
-func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOperation) (string, error) {
+func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOperation, initCode, callData, accountGasLimits, gasFees, paymasterAndData, signature []byte) (string, error) {
 	privateKey := os.Getenv("PRIVATE_KEY") // 从环境变量中读取私钥
 	abiPath := os.Getenv("ABI_PATH")       // 合约 ABI 文件路径
 
@@ -204,37 +155,6 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 		return "", fmt.Errorf("error parsing ABI: %v", err)
 	}
 
-	// 将存储在 MongoDB 中的字符串字段转换回字节切片
-	initCodeBytes, err := hex.DecodeString(userOp.InitCode)
-	if err != nil {
-		return "", fmt.Errorf("error decoding initCode: %v", err)
-	}
-
-	callDataBytes, err := hex.DecodeString(userOp.CallData)
-	if err != nil {
-		return "", fmt.Errorf("error decoding callData: %v", err)
-	}
-
-	accountGasLimitsBytes, err := hex.DecodeString(userOp.AccountGasLimits)
-	if err != nil {
-		return "", fmt.Errorf("error decoding accountGasLimits: %v", err)
-	}
-
-	gasFeesBytes, err := hex.DecodeString(userOp.GasFees)
-	if err != nil {
-		return "", fmt.Errorf("error decoding gasFees: %v", err)
-	}
-
-	paymasterAndDataBytes, err := hex.DecodeString(userOp.PaymasterAndData)
-	if err != nil {
-		return "", fmt.Errorf("error decoding paymasterAndData: %v", err)
-	}
-
-	signatureBytes, err := hex.DecodeString(userOp.Signature)
-	if err != nil {
-		return "", fmt.Errorf("error decoding signature: %v", err)
-	}
-
 	// 使用 ABI 打包数据以调用 handleOps 方法
 	ops := []struct {
 		Sender             common.Address
@@ -250,13 +170,13 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 		{
 			Sender:             userOp.Sender,
 			Nonce:              userOp.Nonce,
-			InitCode:           initCodeBytes,
-			CallData:           callDataBytes,
-			AccountGasLimits:   toFixedSizeByteArray(accountGasLimitsBytes),
+			InitCode:           initCode,
+			CallData:           callData,
+			AccountGasLimits:   toFixedSizeByteArray(accountGasLimits),
 			PreVerificationGas: userOp.PreVerificationGas,
-			GasFees:            toFixedSizeByteArray(gasFeesBytes),
-			PaymasterAndData:   paymasterAndDataBytes,
-			Signature:          signatureBytes,
+			GasFees:            toFixedSizeByteArray(gasFees),
+			PaymasterAndData:   paymasterAndData,
+			Signature:          signature,
 		},
 	}
 
@@ -281,7 +201,7 @@ func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOpera
 
 	// 创建交易对象
 	value := big.NewInt(0)
-	gasLimit := uint64(500000) // 增加 gas limit，确保有足够的 gas
+	gasLimit := uint64(10000000) // 增加 gas limit，确保有足够的 gas
 	toAddress := common.HexToAddress(entryPointAddress)
 	tx := types.NewTransaction(nonce, toAddress, value, gasLimit, gasPrice, data)
 
