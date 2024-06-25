@@ -21,9 +21,13 @@ func main() {
 		log.Fatalf("Failed to create UserOpController: %v", err)
 	}
 
+	// 创建 DepositController 实例
+	depositController := controllers.NewDepositController(userOpController.Client)
+
 	// 初始化路由
 	routes.SetupRouter(r)
 	routes.SetupUserOpRouter(r, userOpController)
+	routes.SetupDepositRouter(r, depositController) // 新增的路由设置
 
 	// 运行服务器
 	if err := r.Run(":3000"); err != nil {
