@@ -127,7 +127,7 @@ func hexStringToBytes(hexStr string) ([]byte, error) {
 // processAndSendUserOp 处理并发送 UserOp 到区块链
 func (ctrl *UserOpController) processAndSendUserOp(userOp models.PackedUserOperation, initCode, callData, accountGasLimits, gasFees, paymasterAndData, signature []byte) (string, error) {
 	privateKey := os.Getenv("PRIVATE_KEY") // 从环境变量中读取私钥
-	abiPath := os.Getenv("ABI_PATH")       // 合约 ABI 文件路径
+	abiPath := os.Getenv("EntryPoint_ABI") // 合约 ABI 文件路径
 
 	// 将私钥字符串转换为 ECDSA 私钥
 	privateKeyECDSA, err := crypto.HexToECDSA(privateKey)
