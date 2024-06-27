@@ -23,10 +23,16 @@ type DepositController struct {
 }
 
 // NewDepositController 创建一个新的 DepositController 实例
-func NewDepositController(client *ethclient.Client) *DepositController {
+func NewDepositController() (*DepositController, error) {
+	rpcURL := os.Getenv("RPC_URL") // 从环境变量中读取 RPC URL
+
+	client, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to connect to the Ethereum client: %w", err)
+	}
 	return &DepositController{
 		Client: client,
-	}
+	}, nil
 }
 
 // DepositToAddress 调用 depositTo 方法，向指定地址存款

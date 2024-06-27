@@ -7,7 +7,6 @@ import (
 	"bundler/controllers"
 	"bundler/routes"
 
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,23 +15,23 @@ func main() {
 
 	r := gin.Default()
 
-	// 连接以太坊客户端
-	client, err := ethclient.Dial("http://localhost:8545")
-	if err != nil {
-		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
-	}
-
 	// 创建 UserOpController 实例
 	userOpController, err := controllers.NewUserOpController()
 	if err != nil {
 		log.Fatalf("Failed to create UserOpController: %v", err)
 	}
 
-	// 创建 PublicKeyOracleController 实例
-	publicKeyOracleController := controllers.NewPublicKeyOracleController(client)
+	// 连接以太坊客户端和设置控制器
+	publicKeyOracleController, err := controllers.NewPublicKeyOracleController()
+	if err != nil {
+		log.Fatalf("Failed to create UserOpController: %v", err)
+	}
 
 	// 创建 DepositController 实例
-	depositController := controllers.NewDepositController(userOpController.Client)
+	depositController, err := controllers.NewDepositController()
+	if err != nil {
+		log.Fatalf("Failed to create UserOpController: %v", err)
+	}
 
 	// 初始化路由
 	routes.SetupRouter(r)

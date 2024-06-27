@@ -11,7 +11,6 @@ import (
 	"os"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -27,10 +26,16 @@ type PublicKeyOracleController struct {
 }
 
 // NewPublicKeyOracleController 创建一个新的 PublicKeyOracleController 实例
-func NewPublicKeyOracleController(client *ethclient.Client) *PublicKeyOracleController {
+func NewPublicKeyOracleController() (*PublicKeyOracleController, error) {
+	rpcURL := os.Getenv("RPC_URL") // 从环境变量中读取 RPC URL
+
+	client, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to connect to the Ethereum client: %w", err)
+	}
 	return &PublicKeyOracleController{
 		Client: client,
-	}
+	}, nil
 }
 
 // SetPublicKey 调用合约的 setPublicKey 方法，设置公钥信息
@@ -114,49 +119,46 @@ func (ctrl *PublicKeyOracleController) SetPublicKey(domain, selector string, mod
 }
 
 // GetRSAKey 方法调用合约的 getRSAKey 方法，获取公钥信息
-func (ctrl *PublicKeyOracleController) GetRSAKey(domain, selector string) ([]byte, []byte, error) {
-	// 读取私钥环境变量
-	privateKey := os.Getenv("PRIVATE_KEY")
-	privateKeyECDSA, err := crypto.HexToECDSA(privateKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error converting private key: %v", err)
-	}
-
-	// 推导以太坊地址
-	fromAddress := crypto.PubkeyToAddress(privateKeyECDSA.PublicKey)
-
+func (ctrl *PublicKeyOracleController) GetRSAKey(domain, selector string) (string, []byte, []byte, error) {
 	// 读取合约 ABI 文件路径
 	abiPath := os.Getenv("PublicKeyOracle_ABI")
 	abiData, err := os.ReadFile(abiPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error reading ABI file: %v", err)
+		return "", nil, nil, fmt.Errorf("error reading ABI file: %v", err)
 	}
 
 	var contractAbi abi.ABI
 	if err := json.Unmarshal(abiData, &contractAbi); err != nil {
-		return nil, nil, fmt.Errorf("error parsing ABI: %v", err)
-	}
-
-	// 构造调用数据
-	callData, err := contractAbi.Pack("getRSAKey", domain, selector)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error packing data: %v", err)
+		return "", nil, nil, fmt.Errorf("error parsing ABI: %v", err)
 	}
 
 	// 获取当前账户的 nonce
+	privateKey := os.Getenv("PRIVATE_KEY")
+	privateKeyECDSA, err := crypto.HexToECDSA(privateKey)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("error converting private key: %v", err)
+	}
+
+	fromAddress := crypto.PubkeyToAddress(privateKeyECDSA.PublicKey)
 	nonce, err := ctrl.Client.PendingNonceAt(context.Background(), fromAddress)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting nonce: %v", err)
+		return "", nil, nil, fmt.Errorf("error getting nonce: %v", err)
 	}
 
 	// 获取建议的 gas price
 	gasPrice, err := ctrl.Client.SuggestGasPrice(context.Background())
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting gas price: %v", err)
+		return "", nil, nil, fmt.Errorf("error getting gas price: %v", err)
 	}
 
 	// 计算发送交易需要的 gas limit
 	gasLimit := uint64(200000) // 根据实际情况调整
+
+	// 构造调用数据
+	callData, err := contractAbi.Pack("getRSAKey", domain, selector)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("error packing data: %v", err)
+	}
 
 	// 创建交易对象
 	value := big.NewInt(0)
@@ -166,45 +168,55 @@ func (ctrl *PublicKeyOracleController) GetRSAKey(domain, selector string) ([]byt
 	// 获取网络 ID
 	networkId, err := ctrl.Client.NetworkID(context.Background())
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting network ID: %v", err)
+		return "", nil, nil, fmt.Errorf("error getting network ID: %v", err)
 	}
 
 	// 签署交易
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(networkId), privateKeyECDSA)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error signing transaction: %v", err)
+		return "", nil, nil, fmt.Errorf("error signing transaction: %v", err)
 	}
 
 	// 发送交易到区块链
 	err = ctrl.Client.SendTransaction(context.Background(), signedTx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error sending transaction: %v", err)
+		return "", nil, nil, fmt.Errorf("error sending transaction: %v", err)
 	}
 
+	// 解析交易事件数据  这里是如果没有返回数据就会报错，所以先注释
 	// 等待交易完成
-	receipt, err := bind.WaitMined(context.Background(), ctrl.Client, signedTx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error waiting for transaction to be mined: %v", err)
-	}
+	// receipt, err := bind.WaitMined(context.Background(), ctrl.Client, signedTx)
+	// if err != nil {
+	// 	return "", nil, nil, fmt.Errorf("error waiting for transaction to be mined: %v", err)
+	// }
 
-	// 解析交易事件数据
-	var result map[string]interface{}
+	// 解析交易事件数据  这里是如果没有返回数据就会报错，所以先注释
+	// var result map[string]interface{}
+	//如果没有接收到数据就直接报错（后加）
+	// if len(receipt.Logs) == 0 {
+	// 	return "", nil, nil, fmt.Errorf("no logs found in receipt")
+	// }
 
-	err = contractAbi.UnpackIntoMap(result, "getRSAKey", receipt.Logs[0].Data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error unpacking result: %v", err)
-	}
+	// err = contractAbi.UnpackIntoMap(result, "getRSAKey", receipt.Logs[0].Data)
+	// if err != nil {
+	// 	return "", nil, nil, fmt.Errorf("error unpacking result: %v", err)
+	// }
 
-	// 提取结果中的 Modulus 和 Exponent
-	modulus, ok := result["Modulus"].([]byte)
-	if !ok {
-		return nil, nil, fmt.Errorf("error casting modulus to []byte")
-	}
+	// // 提取结果中的 Modulus 和 Exponent
+	// modulus, ok := result["Modulus"].([]byte)
+	// if !ok {
+	// 	return "", nil, nil, fmt.Errorf("error casting modulus to []byte")
+	// }
 
-	exponent, ok := result["Exponent"].([]byte)
-	if !ok {
-		return nil, nil, fmt.Errorf("error casting exponent to []byte")
-	}
+	// exponent, ok := result["Exponent"].([]byte)
+	// if !ok {
+	// 	return "", nil, nil, fmt.Errorf("error casting exponent to []byte")
+	// }
 
-	return modulus, exponent, nil
+	// 返回交易哈希和结果
+	txHash := signedTx.Hash().Hex()
+
+	// return txHash, modulus, exponent, nil
+	return txHash, nil, nil, nil //无数据暂时返回空
+
 }

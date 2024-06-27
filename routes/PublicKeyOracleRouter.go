@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetupPublicKeyOracleRouter 初始化公钥路由
+// SetupPublicKeyOracleRouter 设置公钥预言机路由
 func SetupPublicKeyOracleRouter(r *gin.Engine, publicKeyOracleController *controllers.PublicKeyOracleController) {
 	r.POST("/publicKeyOracle/setPublicKey", func(c *gin.Context) {
 		var request struct {
@@ -16,7 +16,6 @@ func SetupPublicKeyOracleRouter(r *gin.Engine, publicKeyOracleController *contro
 			Modulus  []byte `json:"modulus"`
 			Exponent []byte `json:"exponent"`
 		}
-
 		if err := c.ShouldBindJSON(&request); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -28,24 +27,26 @@ func SetupPublicKeyOracleRouter(r *gin.Engine, publicKeyOracleController *contro
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"txHash": txHash})
+		c.JSON(http.StatusOK, gin.H{"message": "Transaction sent successfully", "transactionHash": txHash})
 	})
 
 	r.GET("/publicKeyOracle/getRSAKey", func(c *gin.Context) {
-		domain := c.Query("domain")
-		selector := c.Query("selector")
+		var request struct {
+			Domain   string `form:"domain"`
+			Selector string `form:"selector"`
+		}
+		if err := c.ShouldBindQuery(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
-		modulus, exponent, err := publicKeyOracleController.GetRSAKey(domain, selector)
+		// 调用获取RSA密钥的方法
+		txHash, modulus, exponent, err := publicKeyOracleController.GetRSAKey(request.Domain, request.Selector)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		response := gin.H{
-			"modulus":  modulus,
-			"exponent": exponent,
-		}
-
-		c.JSON(http.StatusOK, response)
+		c.JSON(http.StatusOK, gin.H{"message": "Transaction sent successfully", "transactionHash": txHash, "modulus": modulus, "exponent": exponent})
 	})
 }
